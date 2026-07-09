@@ -3,194 +3,167 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gradient Explorations</title>
+  <title>little waters</title>
+  <link rel="icon" type="image/png" href="otter-favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Reenie+Beanie&display=swap" rel="stylesheet" />
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { overflow:hidden; width:100vw; height:100vh; }
-    #c { display:block; position:fixed; inset:0; width:100vw; height:100vh; }
+    body {
+      background:#f1efe9;
+      font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      color:#2a2a2a;
+    }
+    /* subtle paper grain over the whole page */
+    body::after {
+      content:'';
+      position:fixed; inset:0;
+      pointer-events:none;
+      z-index:50;
+      opacity:0.05;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    header {
+      text-align:center;
+      padding:72px 20px 8px;
+    }
+    header h1 {
+      font-family:'Reenie Beanie', cursive;
+      font-size:44px;
+      font-weight:400;
+      letter-spacing:0.04em;
+      text-transform:lowercase;
+      color:#161616;
+    }
+    header p {
+      margin-top:10px;
+      font-size:10px;
+      letter-spacing:0.1em;
+      color:rgba(0,0,0,0.35);
+    }
+
+    .cards {
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:32px;
+      padding:24px 0 100px;
+    }
+
+    .card {
+      width:100%;
+    }
+    /* no card chrome — each environment draws its own cream paper,
+       so the pieces sit directly on the page, one under the other */
+    .card-frame {
+      position:relative;
+      width:100%;
+      height:100vh;
+      background:#f4f2ec;
+    }
+    .card-frame iframe {
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      border:0;
+      display:block;
+    }
+    /* caption tucked up into the environment's paper margin, aligned with
+       the painted frame (the frames are inset 10% from the page edges) */
+    .card-meta {
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      padding:0 11vw;
+      margin-top:-10vh;
+      position:relative;
+      z-index:3;
+      pointer-events:none;
+    }
+    .card-meta h2 {
+      font-size:11px;
+      font-weight:400;
+      letter-spacing:0.18em;
+      text-transform:lowercase;
+      color:rgba(30,30,30,0.7);
+    }
+    .card-meta span {
+      font-size:9.5px;
+      letter-spacing:0.08em;
+      color:rgba(0,0,0,0.35);
+    }
+
+    footer {
+      text-align:center;
+      padding:0 20px 64px;
+      font-size:9.5px;
+      letter-spacing:0.12em;
+      color:rgba(0,0,0,0.3);
+    }
   </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+  <header>
+    <h1>tiny habitats</h1>
+    <p>tiny ecosystems that don't mind visitors</p>
+  </header>
+
+  <div class="cards">
+    <section class="card" data-src="ponder.html">
+      <div class="card-frame">
+        <iframe loading="lazy" title="pond"></iframe>
+      </div>
+      <div class="card-meta">
+        <h2>pond</h2>
+        <span>tap the water · koi gather where you touch</span>
+      </div>
+    </section>
+
+    <section class="card" data-src="dream.html">
+      <div class="card-frame">
+        <iframe loading="lazy" title="lucid"></iframe>
+      </div>
+      <div class="card-meta">
+        <h2>lucid</h2>
+        <span>click the grass · cows graze, every third one rests</span>
+      </div>
+    </section>
+
+    <section class="card" data-src="sea-otters.html">
+      <div class="card-frame">
+        <iframe loading="lazy" title="otters"></iframe>
+      </div>
+      <div class="card-meta">
+        <h2>otters</h2>
+        <span>tap the water · otters float in, some hold hands</span>
+      </div>
+    </section>
+  </div>
+
+  <footer>made with shaders, grain, and small animals</footer>
+
 <script>
-const canvas = document.getElementById('c');
-const gl = canvas.getContext('webgl');
+// Lazy-load each environment as it approaches, and PAUSE the ones far
+// offscreen (display:none stops their render loops) so only the piece
+// being viewed burns GPU — this is what keeps the page smooth.
+const cards = document.querySelectorAll('.card');
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  gl.viewport(0, 0, canvas.width, canvas.height);
-}
-window.addEventListener('resize', resize);
-resize();
-
-const vert = `
-attribute vec2 a;
-void main() { gl_Position = vec4(a, 0.0, 1.0); }
-`;
-
-const frag = `
-precision highp float;
-uniform vec2  uRes;
-uniform float uTime;
-uniform vec2  uPos[32];
-uniform float uAge[32];
-uniform vec2  uCursor;
-
-vec3 gradientColor(vec2 uv) {
-  vec2 dir = normalize(vec2(-sin(radians(145.51)), -cos(radians(145.51))));
-  float t = clamp(dot(uv - 0.5, dir) * 1.2 + 0.45, 0.0, 1.0);
-
-  vec3 c0 = vec3(0.33, 0.63, 0.44);
-  vec3 c1 = vec3(0.55, 0.75, 0.58);
-  vec3 c2 = vec3(0.52, 0.76, 0.72);
-  vec3 c3 = vec3(0.54, 0.73, 0.85);
-  vec3 c4 = vec3(0.82, 0.91, 0.87);
-  vec3 c5 = vec3(0.91, 0.94, 0.93);
-  vec3 c6 = vec3(0.98, 0.99, 0.98);
-
-  float p0=0.078, p1=0.241, p2=0.357, p3=0.590, p4=0.734, p5=0.849, p6=0.931;
-
-  vec3 col;
-  if      (t <= p0) col = c0;
-  else if (t <= p1) col = mix(c0, c1, (t-p0)/(p1-p0));
-  else if (t <= p2) col = mix(c1, c2, (t-p1)/(p2-p1));
-  else if (t <= p3) col = mix(c2, c3, (t-p2)/(p3-p2));
-  else if (t <= p4) col = mix(c3, c4, (t-p3)/(p4-p3));
-  else if (t <= p5) col = mix(c4, c5, (t-p4)/(p5-p4));
-  else if (t <= p6) col = mix(c5, c6, (t-p5)/(p6-p5));
-  else              col = c6;
-  return mix(vec3(1.0), col, 0.67);
-}
-
-float hash(vec2 p) {
-  p = fract(p * vec2(127.1, 311.7));
-  p += dot(p, p + 74.51);
-  return fract(p.x * p.y);
-}
-
-float grain(vec2 uv, float timeSeed) {
-  vec2 cell = floor(uv * uRes / 0.7);
-  return hash(cell + timeSeed * 0.1);
-}
-
-void main() {
-  vec2 uv = gl_FragCoord.xy / uRes;
-  uv.y = 1.0 - uv.y;
-
-  vec2 gradDisplace  = vec2(0.0);
-  vec2 grainDisplace = vec2(0.0);
-
-  for (int i = 0; i < 32; i++) {
-    float age = uAge[i];
-    if (age < 0.0 || age > 2.5) continue;
-
-    vec2 pos   = vec2(uPos[i].x, 1.0 - uPos[i].y);
-    vec2 delta = uv - pos;
-    float dist = length(delta);
-
-    float ring  = exp(-pow((dist - age * 0.22) / (0.028 + age * 0.012), 2.0));
-    float decay = exp(-age * 1.8);
-    vec2  push  = dist > 0.001 ? (delta / dist) * ring * decay : vec2(0.0);
-
-    gradDisplace  += push * 0.07;
-    grainDisplace += push * 0.28;
+const io = new IntersectionObserver(entries => {
+  for (const en of entries) {
+    const iframe = en.target.querySelector('iframe');
+    if (en.isIntersecting) {
+      if (!iframe.src) iframe.src = en.target.dataset.src;
+      iframe.style.display = 'block';
+    } else if (iframe.src) {
+      iframe.style.display = 'none'; // paused until scrolled back
+    }
   }
+}, { rootMargin: '150px' });
 
-  vec2 sampleUV = uv + gradDisplace;
-  vec3 color = gradientColor(sampleUV);
-  float blBloom = exp(-length(sampleUV - vec2(0.0, 1.0)) * 2.2);
-  color = mix(color, vec3(0.33, 0.72, 0.65), blBloom * 0.72);
-
-  vec2  toCursor   = uv - uCursor;
-  float cursorDist = length(toCursor);
-  float swirl      = exp(-cursorDist * cursorDist * 18.0);
-  float swirlAngle = uTime * 2.2 + cursorDist * 12.0;
-  vec2  swirlOff   = vec2(cos(swirlAngle), sin(swirlAngle)) * swirl * 0.012;
-
-  vec2  grainUV  = uv + grainDisplace + swirlOff;
-  float timeSeed = floor(uTime * 30.0) * swirl;
-
-  vec2 gUV = grainUV + swirlOff * 8.0;
-
-  // Base grain — uniform across whole screen
-  float g = grain(gUV, timeSeed);
-  color = clamp(color + (g - 0.5) * 0.11, 0.0, 1.0);
-
-  // Extra dense fine grain near cursor
-  float proximity = exp(-cursorDist * cursorDist * 50.0);
-  vec2 denseCell = floor(gUV * uRes / 0.32);
-  float denseG = hash(denseCell + timeSeed * 0.1);
-  color = clamp(color + (denseG - 0.5) * 0.18 * proximity, 0.0, 1.0);
-
-  gl_FragColor = vec4(color, 1.0);
-}
-`;
-
-function compileShader(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    console.error(gl.getShaderInfoLog(s));
-  return s;
-}
-
-const prog = gl.createProgram();
-gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, vert));
-gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, frag));
-gl.linkProgram(prog);
-gl.useProgram(prog);
-
-const buf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-const aLoc = gl.getAttribLocation(prog, 'a');
-gl.enableVertexAttribArray(aLoc);
-gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
-
-const uRes    = gl.getUniformLocation(prog, 'uRes');
-const uTime   = gl.getUniformLocation(prog, 'uTime');
-const uPos    = gl.getUniformLocation(prog, 'uPos');
-const uAge    = gl.getUniformLocation(prog, 'uAge');
-const uCursor = gl.getUniformLocation(prog, 'uCursor');
-
-const MAX = 32;
-const trail = Array.from({length: MAX}, () => ({ x: 0.5, y: 0.5, t: -10 }));
-let head = 0;
-let lastX = -999, lastY = -999;
-
-document.addEventListener('mousemove', e => {
-  const nx = e.clientX / canvas.width;
-  const ny = e.clientY / canvas.height;
-  const dx = nx - lastX, dy = ny - lastY;
-  if (dx*dx + dy*dy < 0.0003) return;
-  trail[head] = { x: nx, y: ny, t: performance.now() / 1000 };
-  head = (head + 1) % MAX;
-  lastX = nx; lastY = ny;
-});
-
-function render() {
-  const now = performance.now() / 1000;
-  const posArr = new Float32Array(MAX * 2);
-  const ageArr = new Float32Array(MAX);
-
-  for (let i = 0; i < MAX; i++) {
-    posArr[i*2]   = trail[i].x;
-    posArr[i*2+1] = trail[i].y;
-    ageArr[i] = trail[i].t < 0 ? -1.0 : now - trail[i].t;
-  }
-
-  gl.uniform2f(uRes, canvas.width, canvas.height);
-  gl.uniform1f(uTime, now);
-  gl.uniform2fv(uPos, posArr);
-  gl.uniform1fv(uAge, ageArr);
-  gl.uniform2f(uCursor, lastX < 0 ? 0.5 : lastX, lastY < 0 ? 0.5 : lastY);
-
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  requestAnimationFrame(render);
-}
-render();
+cards.forEach(card => io.observe(card));
 </script>
 </body>
 </html>

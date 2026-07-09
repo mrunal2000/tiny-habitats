@@ -499,6 +499,15 @@ function updateCows(now) {
 }
 requestAnimationFrame(updateCows);
 
+// The pasture never starts empty — one cow is already resting when the page loads.
+(function spawnInitialCow() {
+  const fb = frameBounds();
+  const px = fb.x0 + (fb.x1 - fb.x0) * 0.42;
+  const crest = hillScreenY(px);
+  const py = crest + (fb.y1 - 24 - crest) * 0.55;
+  spawnSittingCow(px, py);
+})();
+
 // Shader render loop: eases cursor, uploads uniforms, draws the fullscreen quad.
 const t0 = performance.now();
 function render(now) {

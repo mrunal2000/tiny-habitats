@@ -398,6 +398,14 @@ function updateOtters(now) {
 }
 requestAnimationFrame(updateOtters);
 
+// The sea never starts empty — one otter is already floating when the page loads.
+(function spawnInitialOtter() {
+  const fb = frameBounds();
+  const px = fb.x0 + (fb.x1 - fb.x0) * 0.5;
+  const py = fb.y0 + (fb.y1 - fb.y0) * 0.45;
+  spawnOtter(px, py);
+})();
+
 const t0 = performance.now();
 function render(now) {
   const dx = tx - cx, dy = ty - cy;
