@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ponder</title>
+  <link rel="icon" type="image/png" href="ponder%20favicon@2x.png" />
+  <link rel="apple-touch-icon" href="ponder%20favicon@2x.png" />
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { overflow:hidden; width:100vw; height:100vh; cursor:crosshair; }
+    #c { display:block; position:fixed; inset:0; width:100vw; height:100vh; touch-action:none; }
+    #fish-layer { position:fixed; inset:0; pointer-events:none; overflow:hidden; }
+    #pellet-layer { position:fixed; inset:0; pointer-events:none; overflow:hidden; }
+    .pellet {
+      position:absolute;
+      width:3px; height:2.5px;
+      border-radius:50%;
+      background:radial-gradient(ellipse at 40% 30%, #ffecc0 0%, #c4882a 70%, #7a5518 100%);
+      box-shadow:
+        inset 0 -0.5px 0.5px rgba(0,0,0,0.18),
+        0 0 2px rgba(255,220,140,0.2);
+      transform:translate(-50%, -50%);
+      will-change:left, top, transform, opacity;
+    }
+    .fish {
+      position:absolute;
+      width:120px; height:auto;
+      transform-origin:50% 50%;
+      will-change:transform, opacity, filter;
+    }
+    #feed-btn {
+      position:fixed;
+      top:calc(16% - 28px);
+      left:50%;
+      transform:translate(-50%, -100%);
+      z-index:10;
+      font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      font-size:11px;
+      letter-spacing:0.14em;
+      text-transform:lowercase;
+      padding:9px 18px;
+      border:1px solid rgba(18, 48, 68, 0.16);
+      border-radius:4px;
+      background:rgba(244, 239, 230, 0.9);
+      color:rgba(18, 48, 68, 0.68);
+      cursor:pointer;
+      backdrop-filter:blur(6px);
+      transition:background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    #feed-btn:hover {
+      background:rgba(252, 250, 246, 0.96);
+      color:rgba(18, 48, 68, 0.88);
+      border-color:rgba(18, 48, 68, 0.28);
+    }
+    #feed-btn:active {
+      transform:translate(-50%, -100%) scale(0.97);
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="fish-layer"></div>
+<div id="pellet-layer"></div>
+<button id="feed-btn" type="button">feed</button>
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const vert = `
+attribute vec2 a;
+void main() { gl_Position = vec4(a, 0.0, 1.0); }
+`;
+
+const frag = `
+precision highp float;
+uniform vec2  uRes;
+uniform float uTime;
+uniform vec2  uClicks[24];
+uniform float uClickTimes[24];
+uniform float uClickStrength[24];
+uniform vec2  uFishPos[12];
+uniform vec2  uFishDir[12];
+uniform float uFishActive[12];
+uniform float uFishSpeed[12];
+uniform float uFishSize[12];
+
+vec3 gradientColor(vec2 uv) {
+  vec2 dir = normalize(vec2(-sin(radians(145.51)), -cos(radians(145.51))));
+  float t = clamp(dot(uv - 0.5, dir) * 1.2 + 0.45, 0.0, 1.0);
+
+  vec3 c0 = vec3(0.06, 0.20, 0.38);
+  vec3 c1 = vec3(0.11, 0.31, 0.52);
+  vec3 c2 = vec3(0.20, 0.45, 0.65);
+  vec3 c3 = vec3(0.36, 0.62, 0.80);
+  vec3 c4 = vec3(0.58, 0.79, 0.90);
+  vec3 c5 = vec3(0.76, 0.89, 0.94);
+  vec3 c6 = vec3(0.90, 0.96, 0.98);
+
+  float p0=0.078, p1=0.241, p2=0.357, p3=0.590, p4=0.734, p5=0.849, p6=0.931;
+
+  vec3 col;
+  if      (t <= p0) col = c0;
+  else if (t <= p1) col = mix(c0, c1, (t-p0)/(p1-p0));
+  else if (t <= p2) col = mix(c1, c2, (t-p1)/(p2-p1));
+  else if (t <= p3) col = mix(c2, c3, (t-p2)/(p3-p2));
+  else if (t <= p4) col = mix(c3, c4, (t-p3)/(p4-p3));
+  else if (t <= p5) col = mix(c4, c5, (t-p4)/(p5-p4));
+  else if (t <= p6) col = mix(c5, c6, (t-p5)/(p6-p5));
+  else              col = c6;
+  return mix(vec3(1.0), col, 0.82);
+}
+
+float sdRoundRect(vec2 p, vec2 halfSize, float r) {
+  vec2 q = abs(p) - halfSize + r;
+  return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  uv.y = 1.0 - uv.y;
+  vec2 aspect = vec2(uRes.x / uRes.y, 1.0);
+
+  vec2 gradDisplace  = vec2(0.0);
+  vec2 grainDisplace = vec2(0.0);
+
+  for (int i = 0; i < 24; i++) {
+    float age = uClickTimes[i];
+    if (age < 0.0 || age > 3.5) continue;
+
+    float str    = uClickStrength[i];
+    vec2 center  = uClicks[i];
+    vec2 toFrag  = uv - center;
+    float dist   = length(vec2(toFrag.x * aspect.x, toFrag.y));
+    vec2 pushDir = length(toFrag) > 0.001 ? normalize(toFrag) : vec2(0.0);
+
+    for (int r = 0; r < 8; r++) {
+      float rAge   = age - float(r) * 0.18;
+      if (rAge < 0.0) continue;
+      float radius = rAge * 0.10;
+      float ring   = exp(-pow((dist - radius) / 0.018, 2.0));
+      float decay  = exp(-rAge * 1.4) * (1.0 - float(r) * 0.08);
+      gradDisplace  += pushDir * ring * decay * 0.06 * str;
+      grainDisplace += pushDir * ring * decay * 0.28 * str;
+    }
+  }
+
+  for (int i = 0; i < 12; i++) {
+    if (uFishActive[i] < 0.5) continue;
+    vec2 fp = uFishPos[i];
+    vec2 fd = uFishDir[i];
+    float spd = uFishSpeed[i];
+    float sz  = uFishSize[i];
+    vec2 toF = vec2((uv.x - fp.x) * aspect.x, uv.y - fp.y);
+    float d  = length(toF);
+    vec2 dir = d > 0.0001 ? toF / d : vec2(0.0);
+
+    float speedFac = 0.12 + spd * 0.88;
+    float halo = exp(-d * d * (380.0 / (0.6 + sz * 0.4)));
+
+    float ahead = clamp(dot(dir, fd), -1.0, 1.0);
+    float bow   = halo * (0.6 + 0.4 * ahead) * speedFac;
+
+    float behind = clamp(dot(dir, -fd), 0.0, 1.0);
+    float wake   = behind * exp(-d * d * 260.0) * sin(uTime * 9.0 - d * 70.0) * speedFac;
+    vec2  lateral = vec2(-fd.y, fd.x);
+
+    grainDisplace += dir * bow * 0.010 + lateral * wake * 0.012;
+    gradDisplace  += dir * bow * 0.004 + lateral * wake * 0.004;
+  }
+
+  float ringLight = 0.0;
+  float ringDark  = 0.0;
+  for (int i = 0; i < 24; i++) {
+    float age = uClickTimes[i];
+    if (age < 0.0 || age > 3.5) continue;
+    float str = uClickStrength[i];
+    vec2 center = uClicks[i];
+    vec2 toFrag = uv - center;
+    float dist  = length(vec2(toFrag.x * aspect.x, toFrag.y));
+    for (int r = 0; r < 8; r++) {
+      float rAge   = age - float(r) * 0.18;
+      if (rAge < 0.0) continue;
+      float radius = rAge * 0.10;
+      float decay  = exp(-rAge * 1.4) * (1.0 - float(r) * 0.08);
+      float crest  = exp(-pow((dist - radius) / 0.007, 2.0));
+      float trough = exp(-pow((dist - radius + 0.018) / 0.010, 2.0));
+      ringLight += crest  * decay * str;
+      ringDark  += trough * decay * 0.6 * str;
+    }
+  }
+  ringLight = clamp(ringLight, 0.0, 1.0);
+  ringDark  = clamp(ringDark,  0.0, 1.0);
+
+  vec2 sampleUV = uv + gradDisplace;
+  vec3 color = gradientColor(sampleUV);
+
+  float blBloom = exp(-length(sampleUV - vec2(0.0, 1.0)) * 2.2);
+  color = mix(color, vec3(0.30, 0.60, 0.80), blBloom * 0.72);
+
+  color = mix(color, min(color * 1.6, vec3(1.0)), ringLight * 0.7);
+  color = mix(color, color * 0.6, ringDark);
+
+  vec2 grainUV = uv + grainDisplace;
+  vec2 cell = floor(grainUV * uRes / 0.7);
+  float g = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+  color = clamp(color + (g - 0.5) * 0.10, 0.0, 1.0);
+
+  float shadow = 0.0;
+  for (int i = 0; i < 12; i++) {
+    if (uFishActive[i] < 0.5) continue;
+    float sz = uFishSize[i];
+    vec2 sp = uFishPos[i]
+            - uFishDir[i] * (0.010 + sz * 0.008)
+            + vec2(0.0, 0.008 + sz * 0.006);
+    vec2 toS = vec2((uv.x - sp.x) * aspect.x, uv.y - sp.y);
+    float spread = 900.0 / (0.55 + sz * 0.65);
+    shadow += exp(-dot(toS, toS) * spread);
+  }
+  shadow = clamp(shadow, 0.0, 1.0);
+  color *= 1.0 - shadow * 0.28;
+
+  vec2 p = uv - 0.5;
+  p.x *= aspect.x;
+  vec2 halfSize = vec2(0.38 * aspect.x, 0.33);
+  float d = sdRoundRect(p, halfSize, 0.06);
+  float mask = 1.0 - smoothstep(0.0, 0.03, d);
+
+  vec3 cream = vec3(0.945, 0.937, 0.914);
+  color = mix(cream, color, mask);
+
+  gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+function compileShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, vert));
+gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, frag));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aLoc = gl.getAttribLocation(prog, 'a');
+gl.enableVertexAttribArray(aLoc);
+gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
+
+const uRes            = gl.getUniformLocation(prog, 'uRes');
+const uTime           = gl.getUniformLocation(prog, 'uTime');
+const uClicks         = gl.getUniformLocation(prog, 'uClicks');
+const uClickTimes     = gl.getUniformLocation(prog, 'uClickTimes');
+const uClickStrength  = gl.getUniformLocation(prog, 'uClickStrength');
+const uFishPos        = gl.getUniformLocation(prog, 'uFishPos');
+const uFishDir        = gl.getUniformLocation(prog, 'uFishDir');
+const uFishActive     = gl.getUniformLocation(prog, 'uFishActive');
+const uFishSpeed      = gl.getUniformLocation(prog, 'uFishSpeed');
+const uFishSize       = gl.getUniformLocation(prog, 'uFishSize');
+
+const MAX_FISH = 12;
+const MAX = 24;
+const POND = { x0: 0.12, x1: 0.88, y0: 0.16, y1: 0.82 };
+const POND_BTN_GAP = 28;
+const clicks = Array.from({length: MAX}, () => ({ x: 0, y: 0, t: -1, strength: 1.0 }));
+let head = 0;
+
+function pushRipple(nx, ny, strength = 1.0) {
+  clicks[head] = {
+    x: nx,
+    y: ny,
+    t: performance.now() / 1000,
+    strength,
+  };
+  head = (head + 1) % MAX;
+}
+
+function handleTap(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  pushRipple(
+    (clientX - rect.left) / rect.width,
+    (clientY - rect.top)  / rect.height,
+    1.0
+  );
+  startleFish(clientX, clientY);
+  spawnFish(clientX, clientY);
+}
+
+// --- Feed ---
+const pelletLayer = document.getElementById('pellet-layer');
+const pellets = [];
+const FEED_SPREAD = 9;
+
+function gaussSpread() {
+  return (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
+}
+
+function disperseFeed() {
+  const cx = (POND.x0 + POND.x1) / 2 * innerWidth;
+  const cy = (POND.y0 + POND.y1) / 2 * innerHeight;
+  const spreadX = (POND.x1 - POND.x0) * innerWidth * 0.38;
+  const spreadY = (POND.y1 - POND.y0) * innerHeight * 0.32;
+  const count = 20 + Math.floor(Math.random() * 8);
+
+  for (let i = 0; i < count; i++) {
+    spawnPellet(
+      cx + gaussSpread() * spreadX,
+      cy + gaussSpread() * spreadY
+    );
+  }
+
+  pushRipple(cx / canvas.width, cy / canvas.height, 0.28);
+}
+
+document.getElementById('feed-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  disperseFeed();
+});
+
+function layoutFeedBtn() {
+  const btn = document.getElementById('feed-btn');
+  btn.style.top = `calc(${POND.y0 * 100}% - ${POND_BTN_GAP}px)`;
+}
+layoutFeedBtn();
+window.addEventListener('resize', layoutFeedBtn);
+
+function clampToPond(px, py) {
+  const b = pondBounds();
+  return {
+    x: Math.min(Math.max(px, b.xMin), b.xMax),
+    y: Math.min(Math.max(py, b.yMin), b.yMax),
+  };
+}
+
+// Mirror the shader's surface displacement so pellets ride the same water
+function waterDisplaceUV(nx, ny, time, grain) {
+  const aspectX = canvas.width / canvas.height;
+  const kRipple = grain ? 0.28 : 0.06;
+  const kBow    = grain ? 0.010 : 0.004;
+  const kWake   = grain ? 0.012 : 0.004;
+  let gx = 0, gy = 0;
+
+  for (let i = 0; i < MAX; i++) {
+    const c = clicks[i];
+    if (c.t < 0) continue;
+    const age = time - c.t;
+    if (age < 0 || age > 3.5) continue;
+
+    const tox = nx - c.x, toy = ny - c.y;
+    const dist = Math.hypot(tox * aspectX, toy);
+    const len = Math.hypot(tox, toy);
+    const pdx = len > 0.001 ? tox / len : 0;
+    const pdy = len > 0.001 ? toy / len : 0;
+
+    for (let r = 0; r < 8; r++) {
+      const rAge = age - r * 0.18;
+      if (rAge < 0) continue;
+      const radius = rAge * 0.10;
+      const ring = Math.exp(-Math.pow((dist - radius) / 0.018, 2));
+      const decay = Math.exp(-rAge * 1.4) * (1 - r * 0.08);
+      const amt = ring * decay * c.strength * kRipple;
+      gx += pdx * amt;
+      gy += pdy * amt;
+    }
+  }
+
+  const n = Math.min(fishes.length, MAX_FISH);
+  for (let i = 0; i < n; i++) {
+    const f = fishes[i];
+    if (f.diving && f.depthFade <= 0.05) continue;
+
+    const fx = f.x / canvas.width;
+    const fy = f.y / canvas.height;
+    const h = f.heading || f.angle;
+    const fdx = Math.cos(h), fdy = Math.sin(h);
+    const spd = f.speedNorm || 0;
+    const sz = Math.min(1, f.sizeMul / 1.4);
+
+    const tox = (nx - fx) * aspectX;
+    const toy = ny - fy;
+    const d = Math.hypot(tox, toy);
+    if (d < 0.0001) continue;
+    const dirx = tox / d, diry = toy / d;
+
+    const speedFac = 0.12 + spd * 0.88;
+    const halo = Math.exp(-d * d * (380 / (0.6 + sz * 0.4)));
+    const ahead = Math.max(-1, Math.min(1, dirx * fdx + diry * fdy));
+    const bow = halo * (0.6 + 0.4 * ahead) * speedFac;
+
+    const behind = Math.max(0, -(dirx * fdx + diry * fdy));
+    const wake = behind * Math.exp(-d * d * 260) * Math.sin(time * 9 - d * 70) * speedFac;
+    const latx = -fdy, laty = fdx;
+
+    gx += dirx * bow * kBow + latx * wake * kWake;
+    gy += diry * bow * kBow + laty * wake * kWake;
+  }
+
+  return { x: gx, y: gy };
+}
+
+// Gentle outward push from passing ripples only (not fish-wake oscillation)
+function rippleDriftPx(nx, ny, time) {
+  const aspectX = canvas.width / canvas.height;
+  let vx = 0, vy = 0;
+
+  for (let i = 0; i < MAX; i++) {
+    const c = clicks[i];
+    if (c.t < 0) continue;
+    const age = time - c.t;
+    if (age < 0 || age > 3.5) continue;
+
+    const tox = nx - c.x, toy = ny - c.y;
+    const dist = Math.hypot(tox * aspectX, toy);
+    const len = Math.hypot(tox, toy);
+    if (len < 0.001) continue;
+    const pdx = tox / len, pdy = toy / len;
+
+    for (let r = 0; r < 8; r++) {
+      const rAge = age - r * 0.18;
+      if (rAge < 0) continue;
+      const radius = rAge * 0.10;
+      const band = Math.exp(-Math.pow((dist - radius) / 0.022, 2));
+      const decay = Math.exp(-rAge * 1.4) * (1 - r * 0.08);
+      const push = band * decay * c.strength * 0.018;
+      vx += pdx * push;
+      vy += pdy * push;
+    }
+  }
+
+  return { x: vx * canvas.width, y: vy * canvas.height };
+}
+
+function pelletSurfacePose(px, py, now) {
+  const nx = px / canvas.width;
+  const ny = py / canvas.height;
+  const wNow = waterDisplaceUV(nx, ny, now, true);
+
+  return {
+    dispX: wNow.x * canvas.width,
+    dispY: wNow.y * canvas.height,
+    tilt: (() => {
+      const e = 2 / canvas.width;
+      const wR = waterDisplaceUV(nx + e, ny, now, true);
+      const wU = waterDisplaceUV(nx, ny - e, now, true);
+      return Math.atan2(
+        (wR.y - wNow.y) * canvas.height,
+        (wU.x - wNow.x) * canvas.width
+      ) * 0.28;
+    })(),
+  };
+}
+
+function spawnPellet(clientX, clientY) {
+  const p = clampToPond(
+    clientX + gaussSpread() * FEED_SPREAD,
+    clientY + gaussSpread() * FEED_SPREAD * 0.75
+  );
+  const el = document.createElement('div');
+  el.className = 'pellet';
+  pelletLayer.appendChild(el);
+  pellets.push({
+    el,
+    x: p.x,
+    y: p.y,
+    z: 4 + Math.random() * 6,
+    vz: -(40 + Math.random() * 30),
+    phase: 'falling',
+    landedAt: 0,
+    eatenAt: 0,
+    bobPhase: Math.random() * Math.PI * 2,
+    landBob: 0,
+    driftX: 0,
+    driftY: 0,
+    smoothDispX: 0,
+    smoothDispY: 0,
+  });
+}
+
+function layoutPellet(p, now, dt) {
+  const pose = pelletSurfacePose(p.x, p.y, now);
+  const smooth = Math.min(1, dt * 14);
+  p.smoothDispX += (pose.dispX - p.smoothDispX) * smooth;
+  p.smoothDispY += (pose.dispY - p.smoothDispY) * smooth;
+
+  const bob = p.phase === 'floating'
+    ? Math.sin(now * 3.6 + p.bobPhase) * 0.5
+    : 0;
+  const sink = p.phase === 'floating' && p.landedAt
+    ? Math.min(0.35, (now - p.landedAt) * 0.025)
+    : 0;
+
+  const rx = p.x + p.smoothDispX;
+  const ry = p.y + p.smoothDispY - p.z - bob + p.landBob * 0.6 + sink;
+  const squash = 1 + bob * 0.02 - sink * 0.06;
+
+  p.el.style.left = rx + 'px';
+  p.el.style.top  = ry + 'px';
+  p.el.style.transform =
+    `translate(-50%, -50%) rotate(${pose.tilt}rad) scale(${1.02 - sink * 0.04}, ${squash})`;
+}
+
+function updatePellets(dt, now) {
+  for (let i = pellets.length - 1; i >= 0; i--) {
+    const p = pellets[i];
+
+    if (p.phase === 'falling') {
+      p.vz -= 380 * dt;
+      p.z += p.vz * dt;
+
+      if (p.z <= 0) {
+        p.z = 0;
+        p.phase = 'floating';
+        p.landedAt = now;
+        p.landBob = 2 + Math.random() * 1.5;
+        p.vz = 0;
+        pushRipple(
+          p.x / canvas.width,
+          p.y / canvas.height,
+          0.025 + Math.random() * 0.02
+        );
+      }
+      layoutPellet(p, now, dt);
+      p.el.style.opacity = '0.92';
+    } else if (p.phase === 'floating') {
+      const nx = p.x / canvas.width;
+      const ny = p.y / canvas.height;
+      const push = rippleDriftPx(nx, ny, now);
+
+      p.driftX = p.driftX * 0.94 + push.x * 0.06;
+      p.driftY = p.driftY * 0.94 + push.y * 0.06;
+      const cap = 18;
+      const ds = Math.hypot(p.driftX, p.driftY);
+      if (ds > cap) { p.driftX = p.driftX / ds * cap; p.driftY = p.driftY / ds * cap; }
+
+      p.x += p.driftX * dt;
+      p.y += p.driftY * dt;
+      const clamped = clampToPond(p.x, p.y);
+      p.x = clamped.x;
+      p.y = clamped.y;
+
+      if (p.landBob > 0.05) p.landBob *= 0.78;
+      else p.landBob = 0;
+
+      layoutPellet(p, now, dt);
+      const age = now - p.landedAt;
+      p.el.style.opacity = age > 8
+        ? String(Math.max(0, 0.92 * (1 - (age - 8) * 0.7)))
+        : '0.92';
+      if (age > 9.5) {
+        p.el.remove();
+        pellets.splice(i, 1);
+      }
+    } else if (p.phase === 'eaten') {
+      layoutPellet(p, now, dt);
+      const t = (now - p.eatenAt) / 0.25;
+      p.el.style.opacity = String(Math.max(0, 1 - t));
+      if (t >= 1) {
+        p.el.remove();
+        pellets.splice(i, 1);
+      }
+    }
+  }
+}
+
+function nearestFloatingPellet(fx, fy, maxDist) {
+  let best = null, bestD = maxDist;
+  for (const p of pellets) {
+    if (p.phase !== 'floating') continue;
+    const d = Math.hypot(p.x - fx, p.y - fy);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
+canvas.addEventListener('click', e => {
+  if (e.target !== canvas) return;
+  handleTap(e.clientX, e.clientY);
+});
+
+// --- Behavior state machine ---
+const BEHAVIOR = {
+  hover:  { speedMul: 0.07, wobbleFreq: 0.85, tailAmp: 9,  wobbleAmp: 0.035, straighten: 0.15 },
+  cruise: { speedMul: 1.0,  wobbleFreq: 3.2,  tailAmp: 26, wobbleAmp: 0.22,  straighten: 0 },
+  glide:  { speedMul: 0.5,  wobbleFreq: 0.22, tailAmp: 2,  wobbleAmp: 0.015, straighten: 0.9 },
+  dart:   { speedMul: 2.7,  wobbleFreq: 9.5,  tailAmp: 36, wobbleAmp: 0.05,  straighten: 0.95 },
+};
+
+const STATE_WEIGHTS = [
+  { state: 'hover',  weight: 0.35 },
+  { state: 'cruise', weight: 0.45 },
+  { state: 'glide',  weight: 0.15 },
+  { state: 'dart',   weight: 0.05 },
+];
+
+function pickDwell(state) {
+  switch (state) {
+    case 'hover':  return 3.5 + Math.random() * 6;
+    case 'cruise': return 4 + Math.random() * 9;
+    case 'glide':  return 1.2 + Math.random() * 2.2;
+    case 'dart':   return 0.25 + Math.random() * 0.45;
+    default:       return 5;
+  }
+}
+
+function pickNextState() {
+  const total = STATE_WEIGHTS.reduce((s, w) => s + w.weight, 0);
+  let r = Math.random() * total;
+  for (const w of STATE_WEIGHTS) {
+    r -= w.weight;
+    if (r <= 0) return w.state;
+  }
+  return 'cruise';
+}
+
+const STARTLE_RADIUS = 280;
+
+function startleFish(cx, cy) {
+  for (const f of fishes) {
+    if (f.diving) continue;
+    const dx = f.x - cx, dy = f.y - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist < STARTLE_RADIUS && dist > 2) {
+      const strength = 1 - dist / STARTLE_RADIUS;
+      f.state = 'dart';
+      f.stateTimer = 0;
+      f.stateDuration = 0.22 + strength * 0.55;
+      f.startleUntil = performance.now() / 1000 + f.stateDuration;
+      f.angle = Math.atan2(dy, dx);
+      f.startleStrength = strength;
+      f.currentTailAmp = BEHAVIOR.dart.tailAmp;
+      f.currentWobbleFreq = BEHAVIOR.dart.wobbleFreq;
+    }
+  }
+}
+
+// --- Swimming fish ---
+const fishLayer = document.getElementById('fish-layer');
+const fishes = [];
+
+const FISH_TYPES = [
+  { src: 'fish.png', faceRight: false, weight: 6 },
+];
+
+function bakeGrain(source, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(source, 0, 0);
+  const id = ctx.getImageData(0, 0, w, h);
+  const d = id.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const n = (Math.random() - 0.5) * 38;
+      d[i]   = Math.min(255, Math.max(0, d[i]   + n));
+      d[i+1] = Math.min(255, Math.max(0, d[i+1] + n));
+      d[i+2] = Math.min(255, Math.max(0, d[i+2] + n));
+    }
+  }
+  ctx.putImageData(id, 0, 0);
+  return c;
+}
+
+FISH_TYPES.forEach(ty => {
+  const img = new Image();
+  img.onload = () => {
+    ty.w = img.naturalWidth;
+    ty.h = img.naturalHeight;
+    let src = img;
+    if (ty.faceRight) {
+      const c = document.createElement('canvas');
+      c.width = ty.w; c.height = ty.h;
+      const cx = c.getContext('2d');
+      cx.translate(ty.w, 0); cx.scale(-1, 1);
+      cx.drawImage(img, 0, 0);
+      src = c;
+    }
+    ty.source = bakeGrain(src, ty.w, ty.h);
+    ty.ready = true;
+    spawnStarterFish();
+  };
+  img.src = ty.src;
+});
+
+function drawFishBody(f) {
+  const ty = f.type;
+  if (!ty || !ty.ready) return;
+  const ctx = f.ctx, cv = f.canvas;
+  const iw = ty.w, ih = ty.h;
+  const W = cv.width, pad = f.pad, bodyH = cv.height - pad * 2;
+  ctx.clearRect(0, 0, W, cv.height);
+
+  const beh = BEHAVIOR[f.state];
+  const phase = f.tailPhase;
+  const step = 3;
+  for (let x = 0; x < W; x += step) {
+    const t = x / W;
+    const amp = f.currentTailAmp * t * t;
+    let dy = amp * Math.sin(phase - t * 3.4);
+    dy += f.turnSmoothed * f.bendGain * t * (1 - beh.straighten);
+    const sx = t * iw;
+    const sw = (step / W) * iw;
+    ctx.drawImage(ty.source, sx, 0, sw, ih, x, pad + dy, step, bodyH);
+  }
+}
+
+function pondBounds() {
+  const m = 35;
+  return {
+    xMin: POND.x0 * innerWidth  + m,
+    xMax: POND.x1 * innerWidth  - m,
+    yMin: POND.y0 * innerHeight + m,
+    yMax: POND.y1 * innerHeight - m,
+  };
+}
+
+function pondEdgeMargin(b) {
+  const span = Math.min(b.xMax - b.xMin, b.yMax - b.yMin);
+  return Math.min(88, Math.max(52, span * 0.1));
+}
+
+function pickFishWaypoint(b) {
+  const inset = pondEdgeMargin(b) * 0.45;
+  return {
+    x: b.xMin + inset + Math.random() * (b.xMax - b.xMin - inset * 2),
+    y: b.yMin + inset + Math.random() * (b.yMax - b.yMin - inset * 2),
+  };
+}
+
+function depthSpeedMul(sizeMul) {
+  return 0.62 + 0.38 * ((sizeMul - 0.5) / 0.9);
+}
+
+function spawnFish(px, py) {
+  const b = pondBounds();
+  px = Math.min(Math.max(px, b.xMin), b.xMax);
+  py = Math.min(Math.max(py, b.yMin), b.yMax);
+
+  if (fishes.length >= MAX_FISH) {
+    const oldest = fishes[0];
+    if (!oldest.diving) oldest.diving = true;
+  }
+
+  const ready = FISH_TYPES.filter(t => t.ready);
+  if (!ready.length) return;
+  const total = ready.reduce((s, t) => s + t.weight, 0);
+  let r = Math.random() * total;
+  let type = ready[0];
+  for (const t of ready) { r -= t.weight; if (r <= 0) { type = t; break; } }
+
+  const W = 220;
+  const bodyH = Math.round(W * type.h / type.w);
+  const pad = 40;
+  const el = document.createElement('canvas');
+  el.width = W;
+  el.height = bodyH + pad * 2;
+  el.className = 'fish';
+  el.style.width = '120px';
+  el.style.height = 'auto';
+  fishLayer.appendChild(el);
+
+  const goRight = Math.random() < 0.5;
+  const baseAngle = (goRight ? 0 : Math.PI) + (Math.random() - 0.5) * 0.7;
+  const sizeMul = 0.5 + Math.random() * 0.9;
+  const baseSpeed = 55 + Math.random() * 45;
+  const initState = pickNextState();
+
+  fishes.push({
+    el,
+    canvas: el,
+    ctx: el.getContext('2d'),
+    type,
+    pad,
+    bendGain: 320,
+    x: px, y: py,
+    angle: baseAngle,
+    baseSpeed,
+    speed: baseSpeed,
+    wanderPhase: Math.random() * Math.PI * 2,
+    wanderSpeed: 0.3 + Math.random() * 0.4,
+    turnSmoothed: 0,
+    faceTarget: Math.cos(baseAngle) > 0 ? -1 : 1,
+    faceY: Math.cos(baseAngle) > 0 ? -1 : 1,
+    born: performance.now() / 1000,
+    sizeMul,
+    scale: sizeMul * 0.3,
+    riseProgress: 0,
+    depthFade: 0,
+    diving: false,
+    state: initState,
+    stateTimer: 0,
+    stateDuration: pickDwell(initState),
+    startleUntil: 0,
+    tailPhase: Math.random() * Math.PI * 2,
+    waypoint: pickFishWaypoint(pondBounds()),
+    waypointUntil: performance.now() / 1000 + 4 + Math.random() * 6,
+    currentTailAmp: BEHAVIOR[initState].tailAmp,
+    currentWobbleFreq: BEHAVIOR[initState].wobbleFreq,
+    currentSpeed: 0,
+    speedNorm: 0,
+  });
+}
+
+let starterFishSpawned = false;
+
+function spawnStarterFish() {
+  if (starterFishSpawned || !FISH_TYPES.some(t => t.ready)) return;
+  starterFishSpawned = true;
+  const cx = (POND.x0 + POND.x1) / 2 * innerWidth;
+  const cy = (POND.y0 + POND.y1) / 2 * innerHeight;
+  spawnFish(cx, cy);
+}
+
+function updateFish(dt, now) {
+  for (let i = fishes.length - 1; i >= 0; i--) {
+    const f = fishes[i];
+
+    if (f.diving) {
+      f.riseProgress = Math.max(0, f.riseProgress - dt * 2.8);
+      f.depthFade = Math.max(0, f.depthFade - dt * 2.2);
+      f.scale = Math.max(0, f.scale - dt * 1.8);
+      const depth = 1 - (f.sizeMul - 0.5) / 0.9;
+      const surface = f.depthFade * f.riseProgress;
+      f.el.style.filter =
+        `brightness(${0.45 + surface * 0.2}) saturate(${0.45 + surface * 0.15}) blur(${(1 - surface) * 5}px)`;
+      f.el.style.opacity = Math.max(0, f.scale / f.sizeMul);
+      drawFishBody(f);
+      f.el.style.left = f.x + 'px';
+      f.el.style.top  = f.y + 'px';
+      const rotDeg = ((f.heading || f.angle) - Math.PI) * 180 / Math.PI;
+      f.el.style.transform =
+        `translate(-50%, -50%) rotate(${rotDeg}deg) scale(${f.scale}, ${f.scale * f.faceY})`;
+      if (f.scale <= 0.04 && f.depthFade <= 0.02) {
+        f.el.remove();
+        fishes.splice(i, 1);
+      }
+      continue;
+    }
+
+    // Sense food early so it can override behavior state
+    const FEED_SENSE = 400;
+    const feedTarget = nearestFloatingPellet(f.x, f.y, FEED_SENSE);
+    const chasingFood = !!(feedTarget && !f.startleUntil);
+    let feedUrgency = 0;
+    let feedDist = Infinity;
+    if (chasingFood) {
+      feedDist = Math.hypot(feedTarget.x - f.x, feedTarget.y - f.y);
+      feedUrgency = 1 - feedDist / FEED_SENSE;
+    }
+
+    // State transitions (skip while startled or chasing food)
+    if (f.startleUntil && now >= f.startleUntil) {
+      f.startleUntil = 0;
+      f.state = 'cruise';
+      f.stateTimer = 0;
+      f.stateDuration = pickDwell('cruise');
+    } else if (!f.startleUntil && !chasingFood) {
+      f.stateTimer += dt;
+      if (f.stateTimer >= f.stateDuration) {
+        f.state = pickNextState();
+        f.stateTimer = 0;
+        f.stateDuration = pickDwell(f.state);
+      }
+    }
+
+    if (chasingFood) {
+      // Glide over on cruise; only dart for the final lunge
+      f.state = feedDist < 85 ? 'dart' : 'cruise';
+      f.stateTimer = 0;
+      f.stateDuration = 999;
+    }
+
+    const beh = BEHAVIOR[f.state];
+    const tailLerp = chasingFood ? 8 : 6;
+    f.currentTailAmp += (beh.tailAmp - f.currentTailAmp) * Math.min(1, dt * tailLerp);
+    f.currentWobbleFreq += (beh.wobbleFreq - f.currentWobbleFreq) * Math.min(1, dt * tailLerp);
+
+    const b = pondBounds();
+    const margin = pondEdgeMargin(b);
+    let ax = 0, ay = 0;
+    if (f.x < b.xMin + margin) ax += (b.xMin + margin - f.x) / margin;
+    if (f.x > b.xMax - margin) ax -= (f.x - (b.xMax - margin)) / margin;
+    if (f.y < b.yMin + margin) ay += (b.yMin + margin - f.y) / margin;
+    if (f.y > b.yMax - margin) ay -= (f.y - (b.yMax - margin)) / margin;
+
+    if (!chasingFood && now >= f.waypointUntil) {
+      f.waypoint = pickFishWaypoint(b);
+      f.waypointUntil = now + 5 + Math.random() * 9;
+    }
+
+    let exploreX = 0, exploreY = 0;
+    if (!chasingFood && f.waypoint) {
+      const dx = f.waypoint.x - f.x, dy = f.waypoint.y - f.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 40) {
+        exploreX = (dx / dist) * 1.4;
+        exploreY = (dy / dist) * 1.4;
+      } else {
+        f.waypointUntil = now;
+      }
+    }
+
+    let sx = 0, sy = 0;
+    const sepWeight = chasingFood ? 2.4 : 3.2;
+    for (let j = 0; j < fishes.length; j++) {
+      if (j === i) continue;
+      const o = fishes[j];
+      const dx = f.x - o.x, dy = f.y - o.y;
+      const distSq = dx * dx + dy * dy;
+      const rad = 55 * (f.sizeMul + o.sizeMul) + 25;
+      if (distSq < rad * rad && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
+        const w = (1 - dist / rad) / dist;
+        sx += dx * w;
+        sy += dy * w;
+      }
+    }
+
+    let turnThisFrame = 0;
+    let feedSteerX = 0, feedSteerY = 0;
+
+    if (chasingFood) {
+      const dx = feedTarget.x - f.x, dy = feedTarget.y - f.y;
+      const closeBoost = 1 + Math.max(0, 1 - feedDist / 120) * 0.7;
+      const steerMag = (5.5 + feedUrgency * 5) * closeBoost;
+      feedSteerX = (dx / (feedDist + 1)) * steerMag;
+      feedSteerY = (dy / (feedDist + 1)) * steerMag;
+    }
+
+    const edgeWeight = chasingFood ? 1.5 : 1.6;
+    const steerX = ax * edgeWeight + sx * sepWeight + feedSteerX + exploreX;
+    const steerY = ay * edgeWeight + sy * sepWeight + feedSteerY + exploreY;
+    if (steerX !== 0 || steerY !== 0) {
+      const fx = Math.cos(f.angle), fy = Math.sin(f.angle);
+      const desired = Math.atan2(fy + steerY, fx + steerX);
+      let diff = desired - f.angle;
+      while (diff >  Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      const turnRate = chasingFood ? 0.15 + feedUrgency * 0.07 : 0.11;
+      turnThisFrame = diff * turnRate;
+      f.angle += turnThisFrame;
+    }
+
+    if (!chasingFood && f.state !== 'dart') {
+      f.wanderPhase += dt * f.wanderSpeed * (f.state === 'hover' ? 0.4 : 1);
+      f.angle += Math.cos(f.wanderPhase) * (f.state === 'hover' ? 0.002 : 0.006);
+    }
+
+    f.turnSmoothed += (turnThisFrame - f.turnSmoothed) * Math.min(1, dt * 7);
+
+    // Tail beat drives thrust with phase lag after centerline crossing
+    f.tailPhase += dt * f.currentWobbleFreq * 2.0;
+    const thrust = Math.max(0, Math.sin(f.tailPhase + 0.45));
+    const turnSlow = chasingFood
+      ? 1 - Math.min(Math.abs(f.turnSmoothed) * 11, 0.26)
+      : 1 - Math.min(Math.abs(f.turnSmoothed) * 14, 0.34);
+    const dSpd = depthSpeedMul(f.sizeMul);
+    const chaseMul = chasingFood
+      ? (feedDist < 85 ? 1.35 + feedUrgency * 0.35 : 1.12 + feedUrgency * 0.38)
+      : 1;
+    const spd = f.baseSpeed * beh.speedMul * chaseMul * dSpd * (0.55 + 0.68 * thrust) * turnSlow;
+    f.currentSpeed = spd;
+    f.speedNorm = Math.min(1, spd / 185);
+
+    const wobbleAmp = beh.wobbleAmp * (f.state === 'dart' ? 0.35 : 1);
+    const heading = f.angle + Math.sin(f.tailPhase * 0.5) * wobbleAmp;
+    f.heading = heading;
+    f.x += Math.cos(heading) * spd * dt;
+    f.y += Math.sin(heading) * spd * dt;
+
+    f.x = Math.min(Math.max(f.x, b.xMin), b.xMax);
+    f.y = Math.min(Math.max(f.y, b.yMin), b.yMax);
+
+    // Eat a nearby pellet
+    const eatR = 22 + f.sizeMul * 12;
+    for (const p of pellets) {
+      if (p.phase !== 'floating') continue;
+      if (Math.hypot(p.x - f.x, p.y - f.y) < eatR) {
+        p.phase = 'eaten';
+        p.eatenAt = now;
+        f.state = 'hover';
+        f.stateTimer = 0;
+        f.stateDuration = 1.2 + Math.random() * 1.8;
+        f.startleUntil = 0;
+        pushRipple(f.x / canvas.width, f.y / canvas.height, 0.14 + Math.random() * 0.08);
+        break;
+      }
+    }
+
+    // Rise from the deep — dim/blurry to sharp/surface
+    f.riseProgress = Math.min(1, f.riseProgress + dt * 0.55);
+    f.depthFade = Math.min(1, f.depthFade + dt * 0.42);
+    const riseEase = 1 - Math.pow(1 - f.riseProgress, 2.5);
+    f.scale = f.sizeMul * (0.32 + 0.68 * riseEase);
+
+    const depth = 1 - (f.sizeMul - 0.5) / 0.9;
+    const surface = f.depthFade * f.riseProgress;
+    const bright = 0.48 + surface * 0.38 + (1 - depth) * 0.14;
+    const sat = 0.52 + surface * 0.38 + (1 - depth) * 0.1;
+    const blur = (1 - surface) * 3.8;
+    f.el.style.filter = `brightness(${bright}) saturate(${sat}) blur(${blur}px)`;
+    f.el.style.opacity = 0.55 + surface * 0.45;
+
+    const c = Math.cos(heading);
+    if (c >  0.15) f.faceTarget = -1;
+    else if (c < -0.15) f.faceTarget = 1;
+    f.faceY += (f.faceTarget - f.faceY) * Math.min(1, dt * 7);
+
+    const rotDeg = (heading - Math.PI) * 180 / Math.PI;
+    const swish = -Math.sin(f.tailPhase) * (f.state === 'dart' ? 1.2 : 3.0);
+
+    drawFishBody(f);
+
+    f.el.style.left = f.x + 'px';
+    f.el.style.top  = f.y + 'px';
+    f.el.style.transform =
+      `translate(-50%, -50%) rotate(${rotDeg + swish}deg) scale(${f.scale}, ${f.scale * f.faceY})`;
+
+    // Idle hover fish occasionally nibble the surface
+    if (f.state === 'hover' && Math.random() < dt * 0.012) {
+      pushRipple(
+        f.x / canvas.width,
+        f.y / canvas.height,
+        0.15 + Math.random() * 0.12
+      );
+    }
+  }
+}
+
+function render(now) {
+  const posArr = new Float32Array(MAX * 2);
+  const ageArr = new Float32Array(MAX);
+  const strArr = new Float32Array(MAX);
+  for (let i = 0; i < MAX; i++) {
+    posArr[i*2]   = clicks[i].x;
+    posArr[i*2+1] = clicks[i].y;
+    ageArr[i] = clicks[i].t < 0 ? -1.0 : now - clicks[i].t;
+    strArr[i] = clicks[i].strength;
+  }
+
+  const fPos = new Float32Array(MAX_FISH * 2);
+  const fDir = new Float32Array(MAX_FISH * 2);
+  const fAct = new Float32Array(MAX_FISH);
+  const fSpd = new Float32Array(MAX_FISH);
+  const fSiz = new Float32Array(MAX_FISH);
+  const n = Math.min(fishes.length, MAX_FISH);
+  for (let i = 0; i < n; i++) {
+    const f = fishes[i];
+    fPos[i*2]   = f.x / canvas.width;
+    fPos[i*2+1] = f.y / canvas.height;
+    const h = f.heading || f.angle;
+    fDir[i*2]   = Math.cos(h);
+    fDir[i*2+1] = Math.sin(h);
+    fAct[i] = f.diving ? Math.max(0, f.depthFade) : 1.0;
+    fSpd[i] = f.speedNorm || 0;
+    fSiz[i] = Math.min(1, f.sizeMul / 1.4);
+  }
+
+  gl.uniform2f(uRes, canvas.width, canvas.height);
+  gl.uniform1f(uTime, now);
+  gl.uniform2fv(uClicks, posArr);
+  gl.uniform1fv(uClickTimes, ageArr);
+  gl.uniform1fv(uClickStrength, strArr);
+  gl.uniform2fv(uFishPos, fPos);
+  gl.uniform2fv(uFishDir, fDir);
+  gl.uniform1fv(uFishActive, fAct);
+  gl.uniform1fv(uFishSpeed, fSpd);
+  gl.uniform1fv(uFishSize, fSiz);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+let lastFrame = performance.now();
+function frame(nowMs) {
+  const dt = Math.min(0.05, Math.max(0.001, (nowMs - lastFrame) / 1000));
+  lastFrame = nowMs;
+  const now = nowMs / 1000;
+  updatePellets(dt, now);
+  updateFish(dt, now);
+  render(now);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

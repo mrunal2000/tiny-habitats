@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>little waters</title>
+  <link rel="icon" type="image/png" href="otter-favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Reenie+Beanie&display=swap" rel="stylesheet" />
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background:#f1efe9;
+      font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      color:#2a2a2a;
+    }
+    /* subtle paper grain over the whole page */
+    body::after {
+      content:'';
+      position:fixed; inset:0;
+      pointer-events:none;
+      z-index:50;
+      opacity:0.05;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    header {
+      text-align:center;
+      padding:72px 20px 8px;
+    }
+    header h1 {
+      font-family:'Reenie Beanie', cursive;
+      font-size:44px;
+      font-weight:400;
+      letter-spacing:0.04em;
+      text-transform:lowercase;
+      color:#161616;
+    }
+    header p {
+      margin-top:10px;
+      font-size:10px;
+      letter-spacing:0.1em;
+      color:rgba(0,0,0,0.35);
+    }
+
+    .cards {
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:32px;
+      padding:24px 0 100px;
+    }
+
+    .card {
+      width:100%;
+    }
+    /* no card chrome — each environment draws its own cream paper,
+       so the pieces sit directly on the page, one under the other */
+    .card-frame {
+      position:relative;
+      width:100%;
+      height:100vh;
+      background:#f4f2ec;
+    }
+    .card-frame iframe {
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      border:0;
+      display:block;
+    }
+    /* caption tucked up into the environment's paper margin, aligned with
+       the painted frame (the frames are inset 10% from the page edges) */
+    .card-meta {
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      padding:0 11vw;
+      margin-top:-10vh;
+      position:relative;
+      z-index:3;
+      pointer-events:none;
+    }
+    .card-meta h2 {
+      font-size:11px;
+      font-weight:400;
+      letter-spacing:0.18em;
+      text-transform:lowercase;
+      color:rgba(30,30,30,0.7);
+    }
+    .card-meta span {
+      font-size:9.5px;
+      letter-spacing:0.08em;
+      color:rgba(0,0,0,0.35);
+    }
+
+    footer {
+      text-align:center;
+      padding:0 20px 64px;
+      font-size:9.5px;
+      letter-spacing:0.12em;
+      color:rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>tiny habitats</h1>
+    <p>tiny ecosystems that don't mind visitors</p>
+  </header>
+
+  <div class="cards">
+    <section class="card" data-src="ponder.html">
+      <div class="card-frame">
+        <iframe loading="lazy" title="pond"></iframe>
+      </div>
+      <div class="card-meta">
+        <h2>pond</h2>
+        <span>tap the water · koi gather where you touch</span>
+      </div>
+    </section>
+
+    <section class="card" data-src="dream.html">
+      <div class="card-frame">
+        <iframe loading="lazy" title="lucid"></iframe>
+      </div>
+      <div class="card-meta">
+        <h2>lucid</h2>
+        <span>click the grass · cows graze, every third one rests</span>
+      </div>
+    </section>
+
+    <section class="card" data-src="sea-otters.html">
+      <div class="card-frame">
+        <iframe loading="lazy" title="otters"></iframe>
+      </div>
+      <div class="card-meta">
+        <h2>otters</h2>
+        <span>tap the water · otters float in, some hold hands</span>
+      </div>
+    </section>
+  </div>
+
+  <footer>made with shaders, grain, and small animals</footer>
+
+<script>
+// Lazy-load each environment as it approaches, and PAUSE the ones far
+// offscreen (display:none stops their render loops) so only the piece
+// being viewed burns GPU — this is what keeps the page smooth.
+const cards = document.querySelectorAll('.card');
+
+const io = new IntersectionObserver(entries => {
+  for (const en of entries) {
+    const iframe = en.target.querySelector('iframe');
+    if (en.isIntersecting) {
+      if (!iframe.src) iframe.src = en.target.dataset.src;
+      iframe.style.display = 'block';
+    } else if (iframe.src) {
+      iframe.style.display = 'none'; // paused until scrolled back
+    }
+  }
+}, { rootMargin: '150px' });
+
+cards.forEach(card => io.observe(card));
+</script>
+</body>
+</html>

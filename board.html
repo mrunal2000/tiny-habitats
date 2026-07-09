@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>board</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      min-height:100vh;
+      background:#f4f4f2;
+      font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      color:#222;
+      overflow-x:hidden;
+    }
+
+    .wall {
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      padding:48px 24px 64px;
+      gap:20px;
+    }
+
+    .board-wrap {
+      position:relative;
+      width:min(520px, 92vw);
+    }
+
+    .board {
+      position:relative;
+      width:100%;
+      aspect-ratio:520 / 780;
+      border-radius:2px;
+      overflow:hidden;
+      box-shadow:
+        0 28px 70px rgba(0,0,0,0.14),
+        0 8px 24px rgba(0,0,0,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.25);
+      background:#8e9398;
+    }
+
+    #metal {
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      display:block;
+      z-index:0;
+    }
+
+    .board-vignette {
+      position:absolute;
+      inset:0;
+      z-index:1;
+      pointer-events:none;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 14%, transparent 86%, rgba(0,0,0,0.1) 100%),
+        radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.12) 100%);
+    }
+
+    .standoff {
+      position:absolute;
+      width:14px; height:14px;
+      border-radius:50%;
+      background:radial-gradient(circle at 35% 30%, #f0f2f4, #8b9096 55%, #5c6168 100%);
+      box-shadow:0 2px 4px rgba(0,0,0,0.28), inset 0 1px 1px rgba(255,255,255,0.55);
+      z-index:5;
+    }
+    .standoff.tl { top:10px; left:10px; }
+    .standoff.tr { top:10px; right:10px; }
+    .standoff.bl { bottom:10px; left:10px; }
+    .standoff.br { bottom:10px; right:10px; }
+    .standoff.ml { top:50%; left:10px; transform:translateY(-50%); }
+    .standoff.mr { top:50%; right:10px; transform:translateY(-50%); }
+
+    .board-title {
+      position:absolute;
+      top:28px; left:0; right:0;
+      text-align:center;
+      font-size:clamp(11px, 2.8vw, 13px);
+      letter-spacing:0.02em;
+      color:rgba(255,255,255,0.92);
+      text-shadow:0 1px 8px rgba(0,0,0,0.35);
+      z-index:4;
+      pointer-events:none;
+      line-height:1.45;
+      padding:0 20px;
+    }
+
+    #items {
+      position:absolute;
+      inset:0;
+      z-index:2;
+    }
+
+    .item {
+      position:absolute;
+      cursor:grab;
+      touch-action:none;
+      user-select:none;
+      filter:drop-shadow(0 5px 14px rgba(0,0,0,0.22));
+      transform-origin:center center;
+    }
+    .item.dragging {
+      cursor:grabbing;
+      z-index:1000 !important;
+      filter:drop-shadow(0 10px 22px rgba(0,0,0,0.28));
+    }
+    .item.selected {
+      outline:1px dashed rgba(255,255,255,0.45);
+      outline-offset:4px;
+    }
+
+    .item img {
+      display:block;
+      max-width:none;
+      pointer-events:none;
+    }
+
+    .polaroid {
+      background:#faf8f4;
+      padding:10px 10px 28px;
+      box-shadow:0 1px 0 rgba(0,0,0,0.06);
+    }
+    .polaroid img {
+      width:100%;
+      height:auto;
+      display:block;
+      background:#ddd;
+    }
+
+    .ephemera {
+      background:#fff;
+      box-shadow:0 1px 0 rgba(0,0,0,0.05);
+    }
+
+    .magnet {
+      position:absolute;
+      width:11px; height:11px;
+      border-radius:50%;
+      background:radial-gradient(circle at 32% 28%, #f5f7f9, #9aa0a6 58%, #636970 100%);
+      box-shadow:0 2px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5);
+      pointer-events:none;
+      z-index:2;
+    }
+    .magnet.tl { top:-5px; left:-5px; }
+    .magnet.tr { top:-5px; right:-5px; }
+    .magnet.bl { bottom:-5px; left:-5px; }
+    .magnet.br { bottom:-5px; right:-5px; }
+
+    .toolbar {
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:center;
+      flex-wrap:wrap;
+    }
+
+    button, .file-btn {
+      font:inherit;
+      font-size:11px;
+      letter-spacing:0.12em;
+      text-transform:lowercase;
+      padding:9px 16px;
+      border:1px solid rgba(18, 48, 68, 0.16);
+      border-radius:4px;
+      background:rgba(255,255,255,0.88);
+      color:rgba(18, 48, 68, 0.72);
+      cursor:pointer;
+      backdrop-filter:blur(6px);
+      transition:background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    button:hover, .file-btn:hover {
+      background:#fff;
+      color:rgba(18, 48, 68, 0.9);
+      border-color:rgba(18, 48, 68, 0.28);
+    }
+    .file-btn { display:inline-block; position:relative; }
+    .file-btn input {
+      position:absolute; inset:0;
+      opacity:0; cursor:pointer;
+    }
+
+    .hint {
+      font-size:10px;
+      letter-spacing:0.08em;
+      color:rgba(18,48,68,0.45);
+      text-align:center;
+      max-width:420px;
+      line-height:1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="wall">
+    <div class="board-wrap">
+      <div class="board" id="board">
+        <canvas id="metal"></canvas>
+        <div class="board-vignette"></div>
+        <div class="standoff tl"></div>
+        <div class="standoff tr"></div>
+        <div class="standoff ml"></div>
+        <div class="standoff mr"></div>
+        <div class="standoff bl"></div>
+        <div class="standoff br"></div>
+        <p class="board-title">This magnetic board of random memories</p>
+        <div id="items"></div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <label class="file-btn">add photo<input type="file" id="file" accept="image/*" multiple /></label>
+      <button type="button" id="add-note">add note</button>
+      <button type="button" id="shuffle">shuffle</button>
+    </div>
+    <p class="hint">drag to move · scroll on item to rotate · delete to remove · drop images anywhere on the board</p>
+  </div>
+
+<script>
+const board = document.getElementById('board');
+
+// --- Brushed stainless metal shader ---
+const metalCanvas = document.getElementById('metal');
+const gl = metalCanvas.getContext('webgl', { antialias: true, alpha: false });
+
+const vert = `
+attribute vec2 a;
+void main() { gl_Position = vec4(a, 0.0, 1.0); }
+`;
+
+const frag = `
+precision highp float;
+uniform vec2  uRes;
+uniform vec2  uLight;
+uniform float uTime;
+
+float hash(vec2 p) {
+  p = fract(p * vec2(127.1, 311.7));
+  p += dot(p, p + 74.5);
+  return fract(p.x * p.y);
+}
+
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash(i);
+  float b = hash(i + vec2(1.0, 0.0));
+  float c = hash(i + vec2(0.0, 1.0));
+  float d = hash(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbmBrush(vec2 uv) {
+  vec2 p = vec2(uv.x * 420.0, uv.y * 14.0);
+  float v = 0.0, a = 0.55;
+  for (int i = 0; i < 5; i++) {
+    v += vnoise(p) * a;
+    p *= 2.03;
+    a *= 0.48;
+  }
+  return v;
+}
+
+float microScratch(vec2 uv) {
+  return vnoise(vec2(uv.x * 1800.0, uv.y * 40.0)) * 0.35
+       + vnoise(vec2(uv.x * 3200.0, uv.y * 70.0)) * 0.15;
+}
+
+vec3 surfaceNormal(vec2 uv) {
+  float e = 1.2 / min(uRes.x, uRes.y);
+  float h  = fbmBrush(uv) * 0.7 + microScratch(uv) * 0.3;
+  float hx = fbmBrush(uv + vec2(e, 0.0)) * 0.7 + microScratch(uv + vec2(e, 0.0)) * 0.3;
+  float hy = fbmBrush(uv + vec2(0.0, e)) * 0.7 + microScratch(uv + vec2(0.0, e)) * 0.3;
+  return normalize(vec3((h - hx) * 3.2, (h - hy) * 0.55, 0.11));
+}
+
+vec3 envSample(vec3 r) {
+  float t = clamp(r.y * 0.5 + 0.5, 0.0, 1.0);
+  vec3 top = vec3(0.97, 0.98, 1.0);
+  vec3 mid = vec3(0.78, 0.80, 0.83);
+  vec3 bot = vec3(0.42, 0.44, 0.47);
+  vec3 col = t > 0.5 ? mix(mid, top, (t - 0.5) * 2.0) : mix(bot, mid, t * 2.0);
+  col += vec3(0.08) * smoothstep(0.72, 0.98, abs(r.x));
+  return col;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+
+  vec3 N = surfaceNormal(uv);
+  vec3 V = vec3(0.0, 0.0, 1.0);
+
+  vec2 lp = uLight * 2.0 - 1.0;
+  vec3 L = normalize(vec3(lp.x * 0.55 - 0.3, lp.y * 0.55 - 0.45, 0.82));
+  vec3 L2 = normalize(vec3(0.42, 0.18, 0.86));
+
+  vec3 T = normalize(vec3(1.0, 0.0, 0.0));
+  vec3 B = normalize(cross(N, T));
+  T = cross(B, N);
+
+  vec3 H  = normalize(L + V);
+  vec3 H2 = normalize(L2 + V);
+
+  float ndotl  = max(dot(N, L), 0.0);
+  float ndotl2 = max(dot(N, L2), 0.0);
+
+  float tdotH = dot(T, H);
+  float bdotH = dot(B, H);
+  float aniso = exp(-pow(tdotH * 4.0, 2.0) / 0.035)
+              * exp(-pow(bdotH * 1.1, 2.0) / 0.42);
+
+  float tdotH2 = dot(T, H2);
+  float aniso2 = exp(-pow(tdotH2 * 3.2, 2.0) / 0.05) * 0.35;
+
+  float spec  = pow(max(dot(N, H),  0.0), 120.0);
+  float spec2 = pow(max(dot(N, H2), 0.0), 60.0);
+
+  vec3 R = reflect(-V, N);
+  vec3 env = envSample(R);
+
+  vec3 base = vec3(0.70, 0.72, 0.74);
+  vec3 col = base * (0.42 + 0.58 * ndotl + 0.18 * ndotl2);
+  col += vec3(1.0) * spec * 0.42;
+  col += vec3(0.92, 0.95, 1.0) * (aniso * 0.62 + aniso2);
+  col += env * (0.06 + 0.22 * pow(1.0 - max(dot(N, V), 0.0), 2.8));
+
+  float fresnel = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+  col = mix(col, vec3(0.94, 0.96, 0.98), fresnel * 0.14);
+
+  col *= 0.98 + microScratch(uv) * 0.04;
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aLoc = gl.getAttribLocation(prog, 'a');
+gl.enableVertexAttribArray(aLoc);
+gl.vertexAttribPointer(aLoc, 2, gl.FLOAT, false, 0, 0);
+
+const uRes   = gl.getUniformLocation(prog, 'uRes');
+const uLight = gl.getUniformLocation(prog, 'uLight');
+const uTime  = gl.getUniformLocation(prog, 'uTime');
+
+let lightPos = { x: 0.28, y: 0.22 };
+
+function resizeMetal() {
+  const rect = board.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  metalCanvas.width  = Math.max(1, Math.floor(rect.width  * dpr));
+  metalCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  gl.viewport(0, 0, metalCanvas.width, metalCanvas.height);
+}
+
+function renderMetal(now) {
+  gl.uniform2f(uRes, metalCanvas.width, metalCanvas.height);
+  gl.uniform2f(uLight, lightPos.x, lightPos.y);
+  gl.uniform1f(uTime, now * 0.001);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  requestAnimationFrame(renderMetal);
+}
+
+board.addEventListener('pointermove', e => {
+  const r = board.getBoundingClientRect();
+  lightPos.x = 0.15 + ((e.clientX - r.left) / r.width) * 0.7;
+  lightPos.y = 0.1 + ((e.clientY - r.top)  / r.height) * 0.7;
+});
+
+new ResizeObserver(resizeMetal).observe(board);
+resizeMetal();
+requestAnimationFrame(renderMetal);
+
+const itemsEl = document.getElementById('items');
+const fileInput = document.getElementById('file');
+
+let zTop = 10;
+let selected = null;
+const items = [];
+
+function boardRect() {
+  return board.getBoundingClientRect();
+}
+
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function placeInBoard(el, xPct, yPct, rot = 0) {
+  el.style.left = `${xPct}%`;
+  el.style.top = `${yPct}%`;
+  el.style.transform = `translate(-50%, -50%) rotate(${rot}deg)`;
+}
+
+function addMagnets(el) {
+  ['tl','tr','bl','br'].forEach(pos => {
+    const m = document.createElement('div');
+    m.className = `magnet ${pos}`;
+    el.appendChild(m);
+  });
+}
+
+function createItem(content, opts = {}) {
+  const {
+    xPct = rand(28, 72),
+    yPct = rand(30, 78),
+    rot = rand(-14, 14),
+    width = 120,
+    polaroid = false,
+  } = opts;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'item';
+  wrap.style.width = `${width}px`;
+  wrap.style.zIndex = String(++zTop);
+
+  if (polaroid) {
+    const frame = document.createElement('div');
+    frame.className = 'polaroid';
+    frame.appendChild(content);
+    wrap.appendChild(frame);
+  } else {
+    wrap.appendChild(content);
+  }
+
+  addMagnets(wrap);
+  placeInBoard(wrap, xPct, yPct, rot);
+  itemsEl.appendChild(wrap);
+  items.push(wrap);
+
+  bindItem(wrap);
+  return wrap;
+}
+
+function addImageFromFile(file, xPct, yPct) {
+  const url = URL.createObjectURL(file);
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = '';
+  img.onload = () => {
+    const maxW = 150;
+    const w = Math.min(maxW, img.naturalWidth);
+    createItem(img, {
+      xPct: xPct ?? rand(25, 75),
+      yPct: yPct ?? rand(32, 75),
+      rot: rand(-18, 18),
+      width: w,
+      polaroid: true,
+    });
+  };
+}
+
+function addNote() {
+  const note = document.createElement('div');
+  note.className = 'ephemera';
+  note.contentEditable = 'true';
+  note.spellcheck = false;
+  note.textContent = 'a note';
+  note.style.cssText = `
+    width:100%; min-height:72px; padding:14px 12px;
+    font:12px/1.45 ui-monospace, monospace;
+    color:#222; outline:none;
+  `;
+  note.addEventListener('pointerdown', e => e.stopPropagation());
+  createItem(note, {
+    xPct: rand(30, 70),
+    yPct: rand(35, 70),
+    rot: rand(-10, 10),
+    width: 110,
+  });
+}
+
+function bindItem(el) {
+  let dragging = false;
+  let startX, startY, originLeft, originTop;
+
+  el.addEventListener('pointerdown', e => {
+    if (e.target.isContentEditable) return;
+    dragging = true;
+    el.classList.add('dragging');
+    el.style.zIndex = String(++zTop);
+    selectItem(el);
+    startX = e.clientX;
+    startY = e.clientY;
+    originLeft = parseFloat(el.style.left) || 50;
+    originTop = parseFloat(el.style.top) || 50;
+    el.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  el.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const rect = boardRect();
+    const dx = ((e.clientX - startX) / rect.width) * 100;
+    const dy = ((e.clientY - startY) / rect.height) * 100;
+    el.style.left = `${Math.min(92, Math.max(8, originLeft + dx))}%`;
+    el.style.top = `${Math.min(92, Math.max(14, originTop + dy))}%`;
+  });
+
+  function endDrag(e) {
+    if (!dragging) return;
+    dragging = false;
+    el.classList.remove('dragging');
+    try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  el.addEventListener('pointerup', endDrag);
+  el.addEventListener('pointercancel', endDrag);
+
+  el.addEventListener('wheel', e => {
+    if (!el.classList.contains('selected')) return;
+    e.preventDefault();
+    const m = el.style.transform.match(/rotate\(([-\d.]+)deg\)/);
+    const rot = m ? parseFloat(m[1]) : 0;
+    const next = rot + (e.deltaY > 0 ? 2 : -2);
+    el.style.transform = `translate(-50%, -50%) rotate(${next}deg)`;
+  }, { passive: false });
+}
+
+function selectItem(el) {
+  if (selected) selected.classList.remove('selected');
+  selected = el;
+  el.classList.add('selected');
+}
+
+function seedBoard() {
+  const poster = document.createElement('div');
+  poster.style.cssText = `
+    width:100%; aspect-ratio:0.62; padding:14px 12px;
+    background:linear-gradient(180deg,#f4a8b8,#e8899d);
+    color:#111; font:bold 11px/1.25 Arial,sans-serif;
+    display:flex; flex-direction:column; justify-content:flex-end;
+  `;
+  poster.innerHTML = '<span style="font-size:18px;line-height:1">Sandwich<br>Club</span><span style="opacity:.7;font-size:9px;margin-top:6px">Barcelona</span>';
+  createItem(poster, { xPct: 52, yPct: 48, rot: -4, width: 92 });
+
+  const sticker = document.createElement('div');
+  sticker.style.cssText = `
+    width:72px; height:72px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#f0d890,#c9982e 55%,#9a7018);
+    display:grid; place-items:center;
+    font:bold 9px/1.2 Arial,sans-serif; color:#111; text-align:center;
+  `;
+  sticker.innerHTML = 'A.P.C.<br>PARIS';
+  createItem(sticker, { xPct: 34, yPct: 62, rot: 8, width: 72 });
+
+  const ticket = document.createElement('div');
+  ticket.className = 'ephemera';
+  ticket.style.cssText = `
+    width:100%; padding:12px 10px;
+    font:9px/1.35 Arial,sans-serif; color:#222;
+  `;
+  ticket.innerHTML = '<strong style="font-size:11px;letter-spacing:.08em">THE MET</strong><br><span style="opacity:.55">admit one</span><br><span style="opacity:.4;font-size:8px">04 · 2026</span>';
+  createItem(ticket, { xPct: 68, yPct: 36, rot: 6, width: 78 });
+
+  const ph = document.createElement('div');
+  ph.style.cssText = 'width:100%;aspect-ratio:1;background:linear-gradient(145deg,#c8d2dc,#98a4b0);';
+  createItem(ph, { xPct: 38, yPct: 34, rot: -9, width: 88, polaroid: true });
+}
+
+fileInput.addEventListener('change', () => {
+  [...fileInput.files].forEach(f => addImageFromFile(f));
+  fileInput.value = '';
+});
+
+board.addEventListener('dragover', e => {
+  e.preventDefault();
+  board.style.outline = '2px dashed rgba(255,255,255,0.35)';
+});
+board.addEventListener('dragleave', () => {
+  board.style.outline = 'none';
+});
+board.addEventListener('drop', e => {
+  e.preventDefault();
+  board.style.outline = 'none';
+  const rect = boardRect();
+  const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+  const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+  [...e.dataTransfer.files].forEach(f => {
+    if (f.type.startsWith('image/')) addImageFromFile(f, xPct, yPct);
+  });
+});
+
+document.getElementById('add-note').addEventListener('click', addNote);
+
+document.getElementById('shuffle').addEventListener('click', () => {
+  items.forEach(el => {
+    placeInBoard(el, rand(18, 82), rand(22, 82), rand(-22, 22));
+    el.style.zIndex = String(++zTop);
+  });
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.item')) {
+    if (selected) selected.classList.remove('selected');
+    selected = null;
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !e.target.isContentEditable) {
+    const i = items.indexOf(selected);
+    if (i >= 0) items.splice(i, 1);
+    selected.remove();
+    selected = null;
+  }
+});
+
+seedBoard();
+</script>
+</body>
+</html>
