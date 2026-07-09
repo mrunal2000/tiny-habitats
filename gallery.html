@@ -183,12 +183,17 @@ if (window.matchMedia('(pointer: coarse)').matches) {
         moved = true; // it's a scroll, not a tap
     }, { passive: true });
     frame.addEventListener('touchend', e => {
-      if (moved || !iframe.contentWindow) return;
+      if (moved || !iframe.contentWindow || !iframe.contentDocument) return;
       const r = iframe.getBoundingClientRect();
       const t = e.changedTouches[0];
-      iframe.contentWindow.dispatchEvent(new MouseEvent('click', {
-        clientX: t.clientX - r.left,
-        clientY: t.clientY - r.top,
+      const x = t.clientX - r.left, y = t.clientY - r.top;
+      // dispatch on the element under the tap, bubbling — reaches both
+      // element-level listeners (pond's canvas, feed button) and
+      // window-level ones (pasture, sea)
+      const target = iframe.contentDocument.elementFromPoint(x, y)
+                  || iframe.contentDocument.body;
+      target.dispatchEvent(new MouseEvent('click', {
+        clientX: x, clientY: y, bubbles: true, view: iframe.contentWindow,
       }));
     }, { passive: true });
   });
