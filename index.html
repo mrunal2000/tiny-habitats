@@ -164,6 +164,35 @@ const io = new IntersectionObserver(entries => {
 }, { rootMargin: '150px' });
 
 cards.forEach(card => io.observe(card));
+
+// On touch screens, a swipe that starts on an iframe scrolls the iframe's
+// own (unscrollable) document and the page gets stuck. So on coarse
+// pointers the iframes ignore touches — the page always scrolls — and we
+// forward taps into the environment by hand (same-origin lets us).
+if (window.matchMedia('(pointer: coarse)').matches) {
+  document.querySelectorAll('.card-frame').forEach(frame => {
+    const iframe = frame.querySelector('iframe');
+    iframe.style.pointerEvents = 'none';
+
+    let sx = 0, sy = 0, moved = false;
+    frame.addEventListener('touchstart', e => {
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; moved = false;
+    }, { passive: true });
+    frame.addEventListener('touchmove', e => {
+      if (Math.hypot(e.touches[0].clientX - sx, e.touches[0].clientY - sy) > 12)
+        moved = true; // it's a scroll, not a tap
+    }, { passive: true });
+    frame.addEventListener('touchend', e => {
+      if (moved || !iframe.contentWindow) return;
+      const r = iframe.getBoundingClientRect();
+      const t = e.changedTouches[0];
+      iframe.contentWindow.dispatchEvent(new MouseEvent('click', {
+        clientX: t.clientX - r.left,
+        clientY: t.clientY - r.top,
+      }));
+    }, { passive: true });
+  });
+}
 </script>
 </body>
 </html>
